@@ -1,45 +1,141 @@
-﻿using System;
+using System;
 using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
 
 namespace MyApp
 {
     public partial class Form1 : Form
     {
-        // Переменные для текста и изображения
-        private string textToDisplay = "";  // Текст, который будет отображен
-        private Point textLocation = new Point(100, 100);  // Местоположение текста
-        private Image currentImage = null;  // Текущее изображение
-        private Point imageLocation = new Point(200, 200);  // Местоположение изображения
+        private string textToDisplay = "";
+        private Point textLocation = new Point(100, 100);
+        private Image currentImage = null;
+        private Point imageLocation = new Point(200, 200);
 
-        // Флаги для перетаскивания
         private bool isDraggingText = false;
         private bool isDraggingImage = false;
-
-        // Для отслеживания последней позиции при перетаскивании
         private Point lastTextPosition;
         private Point lastImagePosition;
 
+        private bool isDrawing = false;
+        private Point lastDrawPoint;
+
+        private float textFontSize = 12f;
+        private float imageScale = 1.0f;
+
+        private Bitmap canvasBitmap;
+        private Graphics canvasGraphics;
+
         public Form1()
         {
-            InitializeComponent();  // Вызов метода инициализации компонентов
+            InitializeComponent();
+            this.MouseWheel += Form1_MouseWheel;
+
+            canvasBitmap = new Bitmap(ClientSize.Width, ClientSize.Height);
+            canvasGraphics = Graphics.FromImage(canvasBitmap);
+            canvasGraphics.Clear(Color.White);
         }
 
-        // Отображение текста и изображения на форме
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
+            e.Graphics.DrawImage(canvasBitmap, Point.Empty);
+
             if (!string.IsNullOrEmpty(textToDisplay))
             {
-                e.Graphics.DrawString(textToDisplay, this.Font, Brushes.Black, textLocation);
+                using (Font font = new Font(this.Font.FontFamily, textFontSize))
+                {
+                    e.Graphics.DrawString(textToDisplay, font, Brushes.Black, textLocation);
+                }
             }
 
             if (currentImage != null)
             {
-                e.Graphics.DrawImage(currentImage, imageLocation);
+                var scaledWidth = (int)(currentImage.Width * imageScale);
+                var scaledHeight = (int)(currentImage.Height * imageScale);
+                e.Graphics.DrawImage(currentImage, new Rectangle(imageLocation, new Size(scaledWidth, scaledHeight)));
             }
         }
 
-        // Обработчик для кнопки "Добавить текст"
+        private void Form1_MouseWheel(object sender, MouseEventArgs e)
+        {
+            if (!string.IsNullOrEmpty(textToDisplay) &&
+                new Rectangle(textLocation, new Size(300, (int)(textFontSize * 2))).Contains(e.Location))
+            {
+                textFontSize += e.Delta > 0 ? 1f : -1f;
+                textFontSize = Math.Max(1f, textFontSize);
+                Invalidate();
+            }
+
+            if (currentImage != null &&
+                new Rectangle(imageLocation, new Size(
+                    (int)(currentImage.Width * imageScale),
+                    (int)(currentImage.Height * imageScale))).Contains(e.Location))
+            {
+                imageScale += e.Delta > 0 ? 0.1f : -0.1f;
+                imageScale = Math.Max(0.1f, imageScale);
+                Invalidate();
+            }
+        }
+
+        private void Form1_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (textToDisplay != "" && e.Button == MouseButtons.Left &&
+                new Rectangle(textLocation, new Size(300, (int)(textFontSize * 2))).Contains(e.Location))
+            {
+                isDraggingText = true;
+                lastTextPosition = e.Location;
+            }
+
+            if (currentImage != null && e.Button == MouseButtons.Left &&
+                new Rectangle(imageLocation, new Size(
+                    (int)(currentImage.Width * imageScale),
+                    (int)(currentImage.Height * imageScale))).Contains(e.Location))
+            {
+                isDraggingImage = true;
+                lastImagePosition = e.Location;
+            }
+
+            if (isDrawing && e.Button == MouseButtons.Left)
+            {
+                lastDrawPoint = e.Location;
+            }
+        }
+
+        private void Form1_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (isDraggingText)
+            {
+                textLocation.X += e.X - lastTextPosition.X;
+                textLocation.Y += e.Y - lastTextPosition.Y;
+                lastTextPosition = e.Location;
+                Invalidate();
+            }
+
+            if (isDraggingImage)
+            {
+                imageLocation.X += e.X - lastImagePosition.X;
+                imageLocation.Y += e.Y - lastImagePosition.Y;
+                lastImagePosition = e.Location;
+                Invalidate();
+            }
+
+            if (isDrawing && e.Button == MouseButtons.Left)
+            {
+                using (Graphics g = Graphics.FromImage(canvasBitmap))
+                {
+                    g.DrawLine(new Pen(Color.Red, 2), lastDrawPoint, e.Location);
+                }
+                lastDrawPoint = e.Location;
+                Invalidate();
+            }
+        }
+
+        private void Form1_MouseUp(object sender, MouseEventArgs e)
+        {
+            isDraggingText = false;
+            isDraggingImage = false;
+        }
+
         private void btnAddText_Click(object sender, EventArgs e)
         {
             using (Form inputForm = new Form())
@@ -65,16 +161,15 @@ namespace MyApp
 
                 btnOK.Click += (s, args) =>
                 {
-                    textToDisplay = textBox.Text;  // Сохраняем введенный текст
-                    inputForm.Close();  // Закрываем окно
-                    Invalidate();  // Перерисовываем форму
+                    textToDisplay = textBox.Text;
+                    inputForm.Close();
+                    Invalidate();
                 };
 
                 inputForm.ShowDialog();
             }
         }
 
-        // Обработчик для кнопки "Добавить изображение"
         private void btnAddImage_Click(object sender, EventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog()
@@ -86,8 +181,9 @@ namespace MyApp
             {
                 try
                 {
-                    currentImage = Image.FromFile(openFileDialog.FileName);  // Загружаем изображение
-                    Invalidate();  // Перерисовываем форму
+                    currentImage = Image.FromFile(openFileDialog.FileName);
+                    imageScale = 1.0f;
+                    Invalidate();
                 }
                 catch (Exception ex)
                 {
@@ -96,52 +192,73 @@ namespace MyApp
             }
         }
 
-        // Обработчики для перетаскивания текста
-        private void Form1_MouseDown(object sender, MouseEventArgs e)
+        private void btnStartDrawing_Click(object sender, EventArgs e)
         {
-            // Проверка, находим ли мы на тексте для его перетаскивания
-            if (textToDisplay != "" && e.Button == MouseButtons.Left &&
-                new Rectangle(textLocation, new Size(300, 30)).Contains(e.Location))  // Устанавливаем область для перетаскивания текста
-            {
-                isDraggingText = true;
-                lastTextPosition = e.Location;
-            }
+            isDrawing = true;
+        }
 
-            // Проверка, находим ли мы на изображении для его перетаскивания
-            if (currentImage != null && e.Button == MouseButtons.Left &&
-                new Rectangle(imageLocation, new Size(currentImage.Width, currentImage.Height)).Contains(e.Location))  // Проверка на область изображения
+        private void btnStopDrawing_Click(object sender, EventArgs e)
+        {
+            isDrawing = false;
+        }
+
+        private void btnSaveCanvas_Click(object sender, EventArgs e)
+        {
+            SaveFileDialog saveFileDialog = new SaveFileDialog
             {
-                isDraggingImage = true;
-                lastImagePosition = e.Location;
+                Filter = "PNG Image|*.png|JPEG Image|*.jpg|Bitmap Image|*.bmp",
+                Title = "Сохранить как изображение"
+            };
+
+            if (saveFileDialog.ShowDialog() == DialogResult.OK)
+            {
+                canvasBitmap.Save(saveFileDialog.FileName);
+                MessageBox.Show("Изображение сохранено успешно!");
             }
         }
 
-        private void Form1_MouseMove(object sender, MouseEventArgs e)
+        private void btnClearCanvas_Click(object sender, EventArgs e)
         {
-            // Перетаскиваем текст
-            if (isDraggingText)
-            {
-                textLocation.X += e.X - lastTextPosition.X;
-                textLocation.Y += e.Y - lastTextPosition.Y;
-                lastTextPosition = e.Location;
-                Invalidate();  // Перерисовываем форму
-            }
+            // Очистить холст
+            canvasGraphics.Clear(Color.White);
 
-            // Перетаскиваем изображение
-            if (isDraggingImage)
+            // Сбросить текстовые настройки
+            textToDisplay = "";
+            textLocation = new Point(100, 100);
+            textFontSize = 12f;
+
+            // Сбросить настройки изображения
+            currentImage = null;
+            imageLocation = new Point(200, 200);
+            imageScale = 1.0f;
+
+            // Перерисовать форму
+            Invalidate();
+        }
+
+
+
+        private void btnSaveWindow_Click(object sender, EventArgs e)
+        {
+            try
             {
-                imageLocation.X += e.X - lastImagePosition.X;
-                imageLocation.Y += e.Y - lastImagePosition.Y;
-                lastImagePosition = e.Location;
-                Invalidate();  // Перерисовываем форму
+                SaveFileDialog saveFileDialog = new SaveFileDialog
+                {
+                    Filter = "PNG Image|*.png|JPEG Image|*.jpg|Bitmap Image|*.bmp",
+                    Title = "Сохранить содержимое холста"
+                };
+
+                if (saveFileDialog.ShowDialog() == DialogResult.OK)
+                {
+                    canvasBitmap.Save(saveFileDialog.FileName);
+                    MessageBox.Show($"Содержимое холста сохранено в файл:\n{saveFileDialog.FileName}", "Сохранение завершено", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Ошибка при сохранении изображения: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
-        private void Form1_MouseUp(object sender, MouseEventArgs e)
-        {
-            // Останавливаем перетаскивание
-            isDraggingText = false;
-            isDraggingImage = false;
-        }
     }
 }
