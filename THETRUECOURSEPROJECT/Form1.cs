@@ -1,60 +1,291 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Windows.Forms;
+using Newtonsoft.Json;
 
 namespace MyApp
-{
+{   
     public partial class Form1 : Form
     {
+        [Serializable]
+        public class CanvasData
+        {
+            public List<CanvasObjectData> Objects { get; set; } = new List<CanvasObjectData>();
+            public List<LineData> Lines { get; set; } = new List<LineData>();
+        }
+
+        [Serializable]
+        public class CanvasObjectData
+        {
+            public string Type { get; set; }
+            public string Text { get; set; }
+            public Point Location { get; set; }
+            public float FontSize { get; set; }
+            public string ImageBase64 { get; set; }
+            public float ImageScale { get; set; }
+        }
+
+
+        [Serializable]
+        public class LineData
+        {
+            public List<Point> Points { get; set; }
+            public Color Color { get; set; }
+            public float Thickness { get; set; }
+        }
+
+        private Image currentImage = null;
         private string textToDisplay = "";
         private Point textLocation = new Point(100, 100);
-        private Image currentImage = null;
         private Point imageLocation = new Point(200, 200);
+        private Point lastTextPosition;
+        private Point lastImagePosition;
+        private Point lastDrawPoint = Point.Empty;
+        private Point lastMousePosition;
+
 
         private bool isDraggingText = false;
         private bool isDraggingImage = false;
-        private Point lastTextPosition;
-        private Point lastImagePosition;
-
         private bool isDrawing = false;
-        private Point lastDrawPoint;
+        private bool isDragging = false;
 
         private float textFontSize = 12f;
         private float imageScale = 1.0f;
 
+
+        private List<CanvasObject> canvasObjects = new List<CanvasObject>();
         private Bitmap canvasBitmap;
         private Graphics canvasGraphics;
+
+
+        private CanvasObject draggedObject = null;
+        private PictureBox drawingCanvas;
+
+
+        //new made
+        private List<LineData> drawnLines = new List<LineData>();
+        private LineData currentLine;
+
+
+        private class CanvasObject
+        {
+            [JsonIgnore] // Исключаем Image из сериализации
+            public Image Image { get; set; }
+
+            public enum ObjectType { Text, Image }
+            public ObjectType Type { get; set; }
+            public string Text { get; set; }
+            public Point Location { get; set; }
+            public float FontSize { get; set; }
+
+            
+            public float ImageScale { get; set; }
+        }
+
 
         public Form1()
         {
             InitializeComponent();
-            this.MouseWheel += Form1_MouseWheel;
+            //InitializeDrawingCanvas(); 
+            //WHAT THE FUCK DOES THIS METHOD EVEN DO THAT IT KILLS ALMOST
+            //ALL OTHER FUNCTIONS?! FIX A S A P!!!
+            InitializeCanvas();
+            this.DoubleBuffered = true;
 
             canvasBitmap = new Bitmap(ClientSize.Width, ClientSize.Height);
             canvasGraphics = Graphics.FromImage(canvasBitmap);
             canvasGraphics.Clear(Color.White);
 
-            // Включаем поддержку Drag and Drop
-            this.AllowDrop = true;
+            this.MouseWheel += Form1_MouseWheel;
             this.DragEnter += Form1_DragEnter;
             this.DragDrop += Form1_DragDrop;
+            this.MouseDown += Form1_MouseDown;
+            this.MouseMove += Form1_MouseMove;
+            this.MouseUp += Form1_MouseUp;
+            this.MouseDoubleClick += Form1_MouseDoubleClick;
+            this.AllowDrop = true; // Включение поддержки Drag-and-Drop
         }
+
+
+
+        private void InitializeCanvas()
+        {
+
+            canvasBitmap = new Bitmap(ClientSize.Width, ClientSize.Height);
+            canvasGraphics = Graphics.FromImage(canvasBitmap);
+            canvasGraphics.Clear(Color.White);
+
+            this.Paint += Form1_Paint;
+        }
+
+
+        private void InitializeDrawingCanvas()
+        {
+            // Инициализация PictureBox для рисования
+            drawingCanvas = new PictureBox
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.Transparent,
+                Parent = this,
+            };
+
+            drawingCanvas.Image = canvasBitmap;
+            Controls.Add(drawingCanvas);
+
+
+        }
+
+        private void DrawingCanvas_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (isDrawing && e.Button == MouseButtons.Left)
+            {
+                lastDrawPoint = e.Location;
+            }
+        }
+
+        private void DrawingCanvas_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (isDrawing && e.Button == MouseButtons.Left && lastDrawPoint != Point.Empty)
+            {
+                using (Graphics g = Graphics.FromImage(canvasBitmap))
+                {
+                    g.DrawLine(Pens.Black, lastDrawPoint, e.Location);
+                }
+                lastDrawPoint = e.Location;
+                drawingCanvas.Invalidate();
+            }
+        }
+
+        private void DrawingCanvas_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (isDrawing && e.Button == MouseButtons.Left)
+            {
+                lastDrawPoint = Point.Empty;
+            }
+        }
+
+        private void Form1_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                // Поиск объекта для перетаскивания
+                draggedObject = canvasObjects
+                    .AsEnumerable()
+                    .Reverse()
+                    .FirstOrDefault(obj => IsObjectHit(obj, e.Location));
+
+                if (draggedObject != null)
+                {
+                    isDragging = true;
+                    lastMousePosition = e.Location;
+                    // Перемещаем объект наверх
+                    canvasObjects.Remove(draggedObject);
+                    canvasObjects.Add(draggedObject);
+                }
+                else if (isDrawing)
+                {
+                    // Начинаем рисование
+                    lastDrawPoint = e.Location;
+                }
+                Invalidate();
+            }
+        }
+
+        // Проверка попадания курсора в объект
+        private bool IsObjectHit(CanvasObject obj, Point location)
+        {
+            if (obj.Type == CanvasObject.ObjectType.Text)
+            {
+                using (var font = new Font(Font.FontFamily, obj.FontSize))
+                {
+                    Size textSize = TextRenderer.MeasureText(obj.Text, font);
+                    return new Rectangle(obj.Location, textSize).Contains(location);
+                }
+            }
+            else if (obj.Type == CanvasObject.ObjectType.Image && obj.Image != null)
+            {
+                Size scaledSize = new Size(
+                    (int)(obj.Image.Width * obj.ImageScale),
+                    (int)(obj.Image.Height * obj.ImageScale));
+                return new Rectangle(obj.Location, scaledSize).Contains(location);
+            }
+            return false;
+        }
+
+        private void Form1_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (isDrawing && lastDrawPoint != Point.Empty)
+            {
+
+
+
+                // Добавляем точку в текущую линию
+            if (currentLine == null)
+                {
+                    currentLine = new LineData
+                    {
+                        Points = new List<Point>(),
+                        Color = Color.Black,
+                        Thickness = 2
+                    };
+                }
+                currentLine.Points.Add(e.Location);
+
+                using (var pen = new Pen(Color.Black, 2))
+                {
+                    canvasGraphics.DrawLine(pen, lastDrawPoint, e.Location);
+                }
+                lastDrawPoint = e.Location;
+                Invalidate();
+
+                // Рисуем линию на основном Bitmap
+                using (var pen = new Pen(Color.Black, 2))
+                {
+                    canvasGraphics.DrawLine(pen, lastDrawPoint, e.Location);
+                }
+                lastDrawPoint = e.Location;
+                Invalidate();
+            }
+            else if (isDragging && draggedObject != null)
+            {
+                // Перетаскивание объекта
+                draggedObject.Location = new Point(
+                    draggedObject.Location.X + e.X - lastMousePosition.X,
+                    draggedObject.Location.Y + e.Y - lastMousePosition.Y);
+                lastMousePosition = e.Location;
+                Invalidate();
+            }
+        }
+
+        private void Form1_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (isDragging)
+            {
+                isDragging = false;
+                draggedObject = null;
+            }
+            else if (isDrawing)
+            {
+                if (currentLine != null)
+                {
+                    drawnLines.Add(currentLine);
+                    currentLine = null;
+                }
+
+                lastDrawPoint = Point.Empty;
+            }
+        }
+
 
         private void Form1_DragEnter(object sender, DragEventArgs e)
         {
-            // Проверяем, поддерживает ли объект формат изображения
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
-                string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
-                if (files.Length > 0 && IsImageFile(files[0]))
-                {
-                    e.Effect = DragDropEffects.Copy;
-                }
-                else
-                {
-                    e.Effect = DragDropEffects.None;
-                }
+                e.Effect = DragDropEffects.Copy;
             }
             else
             {
@@ -62,153 +293,172 @@ namespace MyApp
             }
         }
 
+        public void AddImage(Image image, Point location)
+        {
+            canvasGraphics.DrawImage(image, location);
+            drawingCanvas.Refresh();
+        }
+
+        public void DrawText(string text, Point location, Font font, Color color)
+        {
+            using (Brush brush = new SolidBrush(color))
+            {
+                canvasGraphics.DrawString(text, font, brush, location);
+            }
+            drawingCanvas.Refresh();
+        }
+
+
+        private void Form1_DragDrop(object sender, DragEventArgs e)
+        {
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
+                foreach (string file in files)
+                {
+                    try
+                    {
+                        Image image = Image.FromFile(file);
+                        canvasObjects.Add(new CanvasObject
+                        {
+                            Type = CanvasObject.ObjectType.Image,
+                            Image = image,
+                            Location = this.PointToClient(new Point(e.X, e.Y)),
+                            ImageScale = 1.0f
+                        });
+                        Invalidate();
+                    }
+                    catch
+                    {
+                        MessageBox.Show("Ошибка при загрузке файла.");
+                    }
+                }
+            }
+        }
+
+
+        private bool IsImageFile(string filePath)
+        {
+            string[] extensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif" };
+            return extensions.Contains(Path.GetExtension(filePath).ToLower());
+        }
+
+
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
             e.Graphics.DrawImage(canvasBitmap, Point.Empty);
 
-            if (!string.IsNullOrEmpty(textToDisplay))
+            foreach (var obj in canvasObjects)
             {
-                using (Font font = new Font(this.Font.FontFamily, textFontSize))
+                if (obj.Type == CanvasObject.ObjectType.Text && !string.IsNullOrEmpty(obj.Text))
                 {
-                    e.Graphics.DrawString(textToDisplay, font, Brushes.Black, textLocation);
+                    using (Font font = new Font(Font.FontFamily, obj.FontSize))
+                    {
+                        e.Graphics.DrawString(obj.Text, font, Brushes.Black, obj.Location);
+                    }
+                }
+                else if (obj.Type == CanvasObject.ObjectType.Image && obj.Image != null)
+                {
+                    var scaledSize = new Size(
+                        (int)(obj.Image.Width * obj.ImageScale),
+                        (int)(obj.Image.Height * obj.ImageScale));
+                    e.Graphics.DrawImage(obj.Image, new Rectangle(obj.Location, scaledSize));
                 }
             }
-
-            if (currentImage != null)
-            {
-                var scaledWidth = (int)(currentImage.Width * imageScale);
-                var scaledHeight = (int)(currentImage.Height * imageScale);
-                e.Graphics.DrawImage(currentImage, new Rectangle(imageLocation, new Size(scaledWidth, scaledHeight)));
-            }
         }
+
+
+
+
 
         private void Form1_MouseWheel(object sender, MouseEventArgs e)
         {
-            if (!string.IsNullOrEmpty(textToDisplay) &&
-                new Rectangle(textLocation, new Size(300, (int)(textFontSize * 2))).Contains(e.Location))
-            {
-                textFontSize += e.Delta > 0 ? 1f : -1f;
-                textFontSize = Math.Max(1f, textFontSize);
-                Invalidate();
-            }
+            var obj = canvasObjects.LastOrDefault(o =>
+                (o.Type == CanvasObject.ObjectType.Text &&
+                new Rectangle(o.Location, new Size(300, (int)(o.FontSize * 2))).Contains(e.Location)) ||
+                (o.Type == CanvasObject.ObjectType.Image &&
+                new Rectangle(o.Location, new Size(
+                    (int)(o.Image.Width * o.ImageScale),
+                    (int)(o.Image.Height * o.ImageScale))).Contains(e.Location)));
 
-            if (currentImage != null &&
-                new Rectangle(imageLocation, new Size(
-                    (int)(currentImage.Width * imageScale),
-                    (int)(currentImage.Height * imageScale))).Contains(e.Location))
+            if (obj != null)
             {
-                imageScale += e.Delta > 0 ? 0.1f : -0.1f;
-                imageScale = Math.Max(0.1f, imageScale);
-                Invalidate();
-            }
-        }
-
-        private void Form1_MouseDown(object sender, MouseEventArgs e)
-        {
-            if (textToDisplay != "" && e.Button == MouseButtons.Left &&
-                new Rectangle(textLocation, new Size(300, (int)(textFontSize * 2))).Contains(e.Location))
-            {
-                isDraggingText = true;
-                lastTextPosition = e.Location;
-            }
-
-            if (currentImage != null && e.Button == MouseButtons.Left &&
-                new Rectangle(imageLocation, new Size(
-                    (int)(currentImage.Width * imageScale),
-                    (int)(currentImage.Height * imageScale))).Contains(e.Location))
-            {
-                isDraggingImage = true;
-                lastImagePosition = e.Location;
-            }
-
-            if (isDrawing && e.Button == MouseButtons.Left)
-            {
-                lastDrawPoint = e.Location;
-            }
-        }
-
-        private void Form1_MouseMove(object sender, MouseEventArgs e)
-        {
-            if (isDraggingText)
-            {
-                textLocation.X += e.X - lastTextPosition.X;
-                textLocation.Y += e.Y - lastTextPosition.Y;
-                lastTextPosition = e.Location;
-                Invalidate();
-            }
-
-            if (isDraggingImage)
-            {
-                imageLocation.X += e.X - lastImagePosition.X;
-                imageLocation.Y += e.Y - lastImagePosition.Y;
-                lastImagePosition = e.Location;
-                Invalidate();
-            }
-
-            if (isDrawing && e.Button == MouseButtons.Left)
-            {
-                using (Graphics g = Graphics.FromImage(canvasBitmap))
+                if (obj.Type == CanvasObject.ObjectType.Text)
                 {
-                    g.DrawLine(new Pen(Color.Red, 2), lastDrawPoint, e.Location);
+                    obj.FontSize += e.Delta > 0 ? 1f : -1f;
+                    obj.FontSize = Math.Max(1f, obj.FontSize);
                 }
-                lastDrawPoint = e.Location;
+                else if (obj.Type == CanvasObject.ObjectType.Image)
+                {
+                    obj.ImageScale += e.Delta > 0 ? 0.1f : -0.1f;
+                    obj.ImageScale = Math.Max(0.1f, obj.ImageScale);
+                }
                 Invalidate();
             }
         }
 
-        private void Form1_MouseUp(object sender, MouseEventArgs e)
-        {
-            isDraggingText = false;
-            isDraggingImage = false;
-        }
+
+
+
+
+
+
+
 
         private void btnAddText_Click(object sender, EventArgs e)
         {
+            isDrawing = false;
+
             using (Form inputForm = new Form())
             {
                 inputForm.Text = "Введите текст";
                 inputForm.Size = new Size(400, 200);
 
-                TextBox textBox = new TextBox()
-                {
-                    Multiline = true,
-                    Dock = DockStyle.Fill,
-                    Font = new Font("Arial", 14)
-                };
-
-                Button btnOK = new Button()
-                {
-                    Text = "OK",
-                    Dock = DockStyle.Bottom
-                };
+                TextBox textBox = new TextBox() { Multiline = true, Dock = DockStyle.Fill, Font = new Font("Arial", 14) };
+                Button btnOK = new Button() { Text = "OK", Dock = DockStyle.Bottom };
 
                 inputForm.Controls.Add(textBox);
                 inputForm.Controls.Add(btnOK);
 
                 btnOK.Click += (s, args) =>
                 {
-                    textToDisplay = textBox.Text;
-                    inputForm.Close();
-                    Invalidate();
+                    if (!string.IsNullOrWhiteSpace(textBox.Text))
+                    {
+                        canvasObjects.Add(new CanvasObject
+                        {
+                            Type = CanvasObject.ObjectType.Text,
+                            Text = textBox.Text,
+                            Location = textLocation,
+                            FontSize = textFontSize
+                        });
+                        Invalidate();
+                        inputForm.Close();
+                    }
                 };
 
                 inputForm.ShowDialog();
             }
         }
 
+
         private void btnAddImage_Click(object sender, EventArgs e)
         {
-            OpenFileDialog openFileDialog = new OpenFileDialog()
-            {
-                Filter = "Изображения (*.jpg; *.jpeg; *.png)|*.jpg;*.jpeg;*.png"
-            };
+            isDrawing = false;
+
+            OpenFileDialog openFileDialog = new OpenFileDialog() { Filter = "Изображения (*.jpg; *.jpeg; *.png)|*.jpg;*.jpeg;*.png" };
 
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
                 try
                 {
-                    currentImage = Image.FromFile(openFileDialog.FileName);
-                    imageScale = 1.0f;
+                    var image = Image.FromFile(openFileDialog.FileName);
+                    canvasObjects.Add(new CanvasObject
+                    {
+                        Type = CanvasObject.ObjectType.Image,
+                        Image = image,
+                        Location = imageLocation,
+                        ImageScale = 1.0f
+                    });
                     Invalidate();
                 }
                 catch (Exception ex)
@@ -218,15 +468,40 @@ namespace MyApp
             }
         }
 
+
+
+        public void StartDrawing()
+        {
+            isDrawing = true;
+        }
+
+        public void StopDrawing()
+        {
+            isDrawing = false;
+        }
+        public void AddText(string text)
+        {
+            canvasObjects.Add(new CanvasObject
+            {
+                Type = CanvasObject.ObjectType.Text,
+                Text = text,
+                Location = new Point(100, 100),
+                FontSize = 12f
+            });
+            Invalidate();
+        }
+
         private void btnStartDrawing_Click(object sender, EventArgs e)
         {
             isDrawing = true;
+            lastDrawPoint = Point.Empty;
         }
 
         private void btnStopDrawing_Click(object sender, EventArgs e)
         {
             isDrawing = false;
         }
+
 
         private void btnSaveCanvas_Click(object sender, EventArgs e)
         {
@@ -238,53 +513,236 @@ namespace MyApp
 
             if (saveFileDialog.ShowDialog() == DialogResult.OK)
             {
-                canvasBitmap.Save(saveFileDialog.FileName);
-                MessageBox.Show("Изображение сохранено успешно!");
+                SaveCanvas(saveFileDialog.FileName);
             }
         }
 
+        private void SaveCanvas(string filePath)
+        {
+            using (Bitmap finalBitmap = new Bitmap(ClientSize.Width, ClientSize.Height))
+            using (Graphics g = Graphics.FromImage(finalBitmap))
+            {
+                g.Clear(Color.White);
+                // Рисуем нарисованные линии
+                g.DrawImage(canvasBitmap, Point.Empty);
+
+                // Рисуем все объекты поверх
+                foreach (var obj in canvasObjects)
+                {
+                    if (obj.Type == CanvasObject.ObjectType.Text)
+                    {
+                        using (Font font = new Font(Font.FontFamily, obj.FontSize))
+                        {
+                            g.DrawString(obj.Text, font, Brushes.Black, obj.Location);
+                        }
+                    }
+                    else if (obj.Type == CanvasObject.ObjectType.Image)
+                    {
+                        Size scaledSize = new Size(
+                            (int)(obj.Image.Width * obj.ImageScale),
+                            (int)(obj.Image.Height * obj.ImageScale));
+                        g.DrawImage(obj.Image, new Rectangle(obj.Location, scaledSize));
+                    }
+                }
+                finalBitmap.Save(filePath);
+            }
+            MessageBox.Show("Изображение сохранено успешно!");
+        }
+
+
         private void btnClearCanvas_Click(object sender, EventArgs e)
         {
-            // Очистить холст
             canvasGraphics.Clear(Color.White);
-
-            // Сбросить текстовые настройки
-            textToDisplay = "";
-            textLocation = new Point(100, 100);
-            textFontSize = 12f;
-
-            // Сбросить настройки изображения
-            currentImage = null;
-            imageLocation = new Point(200, 200);
-            imageScale = 1.0f;
-
-            // Перерисовать форму
+            canvasObjects.Clear();
             Invalidate();
         }
 
 
 
-        private void btnSaveWindow_Click(object sender, EventArgs e)
-        {
-            try
-            {
-                SaveFileDialog saveFileDialog = new SaveFileDialog
-                {
-                    Filter = "PNG Image|*.png|JPEG Image|*.jpg|Bitmap Image|*.bmp",
-                    Title = "Сохранить содержимое холста"
-                };
 
-                if (saveFileDialog.ShowDialog() == DialogResult.OK)
-                {
-                    canvasBitmap.Save(saveFileDialog.FileName);
-                    MessageBox.Show($"Содержимое холста сохранено в файл:\n{saveFileDialog.FileName}", "Сохранение завершено", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                }
-            }
-            catch (Exception ex)
+
+
+
+        private void Form1_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
             {
-                MessageBox.Show($"Ошибка при сохранении изображения: {ex.Message}", "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                var clickedObject = canvasObjects.LastOrDefault(o =>
+                    (o.Type == CanvasObject.ObjectType.Text &&
+                     new Rectangle(o.Location, new Size(300, (int)(o.FontSize * 2))).Contains(e.Location)) ||
+                    (o.Type == CanvasObject.ObjectType.Image &&
+                     new Rectangle(o.Location, new Size(
+                         (int)(o.Image.Width * o.ImageScale),
+                         (int)(o.Image.Height * o.ImageScale))).Contains(e.Location)));
+
+                if (clickedObject != null)
+                {
+                    canvasObjects.Remove(clickedObject);
+                    MessageBox.Show("Элемент удален", "Информация", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    Invalidate();
+                }
             }
         }
 
+
+
+        private void AddCanvasObject(CanvasObject obj)
+        {
+            canvasObjects.Add(obj);
+            //Invalidate();
+        }
+
+
+        private void RemoveCanvasObject(CanvasObject obj)
+        {
+            canvasObjects.Remove(obj);
+            //Invalidate();
+        }
+
+        public void SaveToNote(string path)
+        {
+            var data = new CanvasData();
+
+            // Сериализуем объекты
+            foreach (var obj in canvasObjects)
+            {
+                var objData = new CanvasObjectData
+                {
+                    Type = obj.Type.ToString(),
+                    Location = obj.Location,
+                    FontSize = obj.FontSize,
+                    ImageScale = obj.ImageScale,
+                    Text = obj.Text
+                };
+
+                if (obj.Type == CanvasObject.ObjectType.Image && obj.Image != null)
+                {
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        obj.Image.Save(ms, ImageFormat.Png);
+                        objData.ImageBase64 = Convert.ToBase64String(ms.ToArray());
+                    }
+                }
+
+                data.Objects.Add(objData);
+            }
+
+            // Сериализуем линии
+            data.Lines = drawnLines;
+
+            // Сохраняем в файл
+            var json = JsonConvert.SerializeObject(data, Formatting.Indented,
+                new JsonSerializerSettings
+                {
+                    TypeNameHandling = TypeNameHandling.Auto
+                });
+
+            File.WriteAllText(path, json);
+        }
+
+        public void LoadFromNote(string path)
+        {
+            var json = File.ReadAllText(path);
+            var data = JsonConvert.DeserializeObject<CanvasData>(json,
+                new JsonSerializerSettings
+                {
+                    TypeNameHandling = TypeNameHandling.Auto
+                });
+
+            // Очищаем текущий холст
+            canvasObjects.Clear();
+            canvasGraphics.Clear(Color.White);
+            drawnLines.Clear();
+
+            // Восстанавливаем объекты
+            foreach (var objData in data.Objects)
+            {
+                var obj = new CanvasObject
+                {
+                    Type = (CanvasObject.ObjectType)Enum.Parse(typeof(CanvasObject.ObjectType), objData.Type),
+                    Location = objData.Location,
+                    FontSize = objData.FontSize,
+                    ImageScale = objData.ImageScale,
+                    Text = objData.Text
+                };
+
+                if (obj.Type == CanvasObject.ObjectType.Image && !string.IsNullOrEmpty(objData.ImageBase64))
+                {
+                    byte[] bytes = Convert.FromBase64String(objData.ImageBase64);
+                    using (MemoryStream ms = new MemoryStream(bytes))
+                    {
+                        obj.Image = Image.FromStream(ms);
+                    }
+                }
+
+                canvasObjects.Add(obj);
+            }
+
+            // Восстанавливаем линии
+            drawnLines = data.Lines;
+            RedrawAllLines();
+
+            Invalidate();
+        }
+
+
+        private void RedrawAllLines()
+        {
+            canvasGraphics.Clear(Color.White);
+            foreach (var line in drawnLines)
+            {
+                using (var pen = new Pen(line.Color, line.Thickness))
+                {
+                    for (int i = 1; i < line.Points.Count; i++)
+                    {
+                        canvasGraphics.DrawLine(pen, line.Points[i - 1], line.Points[i]);
+                    }
+                }
+            }
+        }
+
+        private void btnSaveCustom_Click(object sender, EventArgs e)
+        {
+            SaveFileDialog dialog = new SaveFileDialog
+            {
+                Filter = "Note Files|*.note",
+                Title = "Save Canvas"
+            };
+
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                SaveToNote(dialog.FileName);
+            }
+        }
+
+        private void btnLoadCustom_Click(object sender, EventArgs e)
+        {
+            OpenFileDialog dialog = new OpenFileDialog
+            {
+                Filter = "Note Files|*.note",
+                Title = "Open Canvas"
+            };
+
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                LoadFromNote(dialog.FileName);
+            }
+        }
+
+
+        private void Invalidate()
+        {
+            base.Invalidate();
+        }
+
+        private void Form1_Load(object sender, EventArgs e)
+        {
+            this.AllowDrop = true;
+        }
+
+        private void panelControls_Paint(object sender, PaintEventArgs e)
+        {
+
+        }
     }
 }
