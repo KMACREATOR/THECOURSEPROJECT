@@ -12,7 +12,8 @@ namespace MyApp
         private System.Windows.Forms.Button btnStartDrawing;
         private System.Windows.Forms.Button btnStopDrawing;
         private System.Windows.Forms.Button btnClearCanvas;
-        private System.Windows.Forms.Button btnSaveWindow;
+        private System.Windows.Forms.Button btnSaveCanvas;
+
 
         private void InitializeComponent()
         {
@@ -22,7 +23,7 @@ namespace MyApp
             this.btnStartDrawing = new System.Windows.Forms.Button();
             this.btnStopDrawing = new System.Windows.Forms.Button();
             this.btnClearCanvas = new System.Windows.Forms.Button();
-            this.btnSaveWindow = new System.Windows.Forms.Button();
+            this.btnSaveCanvas = new System.Windows.Forms.Button();
             this.panelControls.SuspendLayout();
             this.SuspendLayout();
             // 
@@ -33,11 +34,11 @@ namespace MyApp
             this.panelControls.Controls.Add(this.btnStartDrawing);
             this.panelControls.Controls.Add(this.btnStopDrawing);
             this.panelControls.Controls.Add(this.btnClearCanvas);
-            this.panelControls.Controls.Add(this.btnSaveWindow);
+            this.panelControls.Controls.Add(this.btnSaveCanvas);
             this.panelControls.Dock = System.Windows.Forms.DockStyle.Top;
             this.panelControls.Location = new System.Drawing.Point(0, 0);
             this.panelControls.Name = "panelControls";
-            this.panelControls.Size = new System.Drawing.Size(784, 50);
+            this.panelControls.Size = new System.Drawing.Size(1000, 50);
             this.panelControls.TabIndex = 0;
             // 
             // btnAddText
@@ -84,16 +85,15 @@ namespace MyApp
             this.btnClearCanvas.TabIndex = 4;
             this.btnClearCanvas.Text = "Очистить холст";
             this.btnClearCanvas.Click += new System.EventHandler(this.btnClearCanvas_Click);
-            //
-            //btnSaveWindow
-            //
-            this.btnSaveWindow.Location = new System.Drawing.Point(710, 10);
-            this.btnSaveWindow.Name = "btnSaveWindow";
-            this.btnSaveWindow.Size = new System.Drawing.Size(100, 37);
-            this.btnSaveWindow.TabIndex = 5;
-            this.btnSaveWindow.Text = "Сохранить изображение";
-            this.btnSaveWindow.Click += new System.EventHandler(this.btnSaveWindow_Click);
-
+            // 
+            // btnSaveWindow
+            // 
+            this.btnSaveCanvas.Location = new System.Drawing.Point(710, 10);
+            this.btnSaveCanvas.Name = "btnSaveCanvas";
+            this.btnSaveCanvas.Size = new System.Drawing.Size(100, 37);
+            this.btnSaveCanvas.TabIndex = 5;
+            this.btnSaveCanvas.Text = "Сохранить как изображение";
+            this.btnSaveCanvas.Click += new System.EventHandler(this.btnSaveCanvas_Click);
             // 
             // Form1
             // 
@@ -101,6 +101,7 @@ namespace MyApp
             this.Controls.Add(this.panelControls);
             this.Name = "Form1";
             this.Text = "Мое приложение";
+            this.Load += new System.EventHandler(this.Form1_Load);
             this.Paint += new System.Windows.Forms.PaintEventHandler(this.Form1_Paint);
             this.MouseDown += new System.Windows.Forms.MouseEventHandler(this.Form1_MouseDown);
             this.MouseMove += new System.Windows.Forms.MouseEventHandler(this.Form1_MouseMove);
@@ -110,6 +111,6 @@ namespace MyApp
 
         }
 
-        
+
     }
 }
